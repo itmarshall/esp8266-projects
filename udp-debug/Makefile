@@ -13,7 +13,7 @@
 # `ESP_HOSTNAME=my.esp.example.com make wiflash` is an easy way to override a variable
 
 # The name of the project being built.
-PROJ_NAME ?= ota-tcp
+PROJ_NAME ?= udp-debug
 
 # hostname or IP address for OTA flashing
 ESP_HOSTNAME ?= esp8266
