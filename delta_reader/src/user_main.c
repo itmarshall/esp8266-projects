@@ -58,27 +58,13 @@ static const uint8_t COMMANDS[][2] = {
     {0x12, 0x07}, // AC current max
     {0x12, 0x08}, // AC voltage min
     {0x12, 0x09}, // AC voltage max
-    {0x12, 0x0A}, // AC power
-    {0x12, 0x0B}, // AC frequency min
-    {0x12, 0x0C}, // AC frequency max
-    {0x03, 0x05}, // Starting voltage
-    {0x03, 0x06}, // Under voltage 1
-    {0x03, 0x07}, // Under voltage 2
-    {0x08, 0x02}, // Min MPP
-    {0x08, 0x02}, // Max MPP
-    {0x08, 0x02}, // Increment
-    {0x08, 0x02}, // Exponential factor
-    {0x08, 0x02}, // Min MPP power
-    {0x08, 0x02}, // MPP sampling
-    {0x08, 0x02}, // MPP scan rate
-    {0x08, 0x02}, // Number of MPP trackers
-    {0x08, 0x02}  // Startup emmissions
+    {0x12, 0x0A}  // AC power
 };
 
 // The number of non-overhead bytes in the reply for each command.
 static const uint8_t COMMAND_LENGTHS[] = {
     2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 2, 2, 2, 1, 2
+    2, 2, 2, 2, 2, 2, 2
 };
 
 static const char *COMMAND_TAGS[] = {
@@ -114,30 +100,14 @@ static const char *COMMAND_TAGS[] = {
     "current-max-ac",
     "voltage-min-ac",
     "voltage-max-ac",
-    "power-ac",
-    "frequency-min-ac",
-    "frequency-max-ac",
-    "starting-voltage",
-    "under-voltage-1",
-    "under-voltage-2",
-    "mpp-min",
-    "mpp-max",
-    "increment",
-    "exp-factor",
-    "mpp-power-min",
-    "mpp-sampling",
-    "mpp-scan-rate",
-    "mpp-tracker-count",
-    "startup-emmissions"
+    "power-ac"
 };
 
 // The number of commands that are to be sent to the Delta inverter for data retrieval.
-//#define COMMAND_COUNT 47
-#define COMMAND_COUNT 38
+#define COMMAND_COUNT 33
 
 // Stores the address to which the results from the inverter are sent via HTTP in an ip_addr structure.
-//#define REMOTE_ADDR(ip) (ip)[0] = 10; (ip)[1] = 0; (ip)[2] = 1; (ip)[3] = 253;
-#define REMOTE_ADDR(ip) (ip)[0] = 10; (ip)[1] = 0; (ip)[2] = 1; (ip)[3] = 48;
+#define REMOTE_ADDR(ip) (ip)[0] = 10; (ip)[1] = 0; (ip)[2] = 1; (ip)[3] = 253;
 
 // The number of bytes in each packet that is not either a command or data.
 static const uint8_t PACKET_OVERHEAD = 7;
@@ -167,6 +137,9 @@ static const uint8_t ETX = 0x03;
 // The priority of the disconnect task.
 static const uint8_t DISCONNECT_PRI = 1;
 
+// The number of receive retries that will be attempted before the commjnication is considered to have timed out.
+static const uint8_t RETRY_LIMIT = 200;
+
 // The current command index that we are processing.
 static uint8_t current_command_index = 0;
 
@@ -185,6 +158,9 @@ static uint8_t rx_buffer[RX_BUFFER_LENGTH];
 // The number of bytes in the current RX serial buffer.
 static uint8_t rx_buffer_len = 0;
 
+// The number of attempts that have been made to read a reply packet in the current command cycle.
+static uint8_t rx_attempts = 0;
+
 // Flag as to whether a time out has occurred.
 static bool timeout = true;
 
@@ -200,7 +176,7 @@ static esp_tcp proto;
 // The timer used for knowing when to start the transmissions to the Delta inverter.
 static os_timer_t transmit_timer;
 
-// The timer used for timing out a serial transmission/reception for the inverter, in case there is no reply.
+// The timer used for checking for receptions from the Delta inverter.
 static os_timer_t serial_rx_timer;
 
 // Buffer that is used to hold the contents of an HTTP message to be sent.
@@ -454,6 +430,52 @@ void ICACHE_FLASH_ATTR uart_tx_array(uint8_t *array, uint8_t len) {
 }
 
 /*
+ * Reads all of the characters from the UART's buffer, and discards them.
+ */
+LOCAL bool flush_uart() {
+    uint8_t rx_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
+    while (rx_len > 0) {
+        READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
+        rx_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
+    }
+}
+
+/*
+ * Reads characters from the serial port, if any are currently pending.
+ */
+LOCAL bool uart_rx() {
+    // See how many bytes have been received so far.
+    uint8_t rx_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
+    if (rx_len > 0) {
+        // Add the received bytes to the buffer.
+        char rx_char;
+        //os_printf("rx (%d): ", rx_len);
+        for (uint8_t ii = 0; ii < rx_len; ii++) {
+            rx_char = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
+            //os_printf("%02x ", rx_char);
+            if ((rx_char == 0) && (rx_buffer_len == 0)) {
+                // Discard this leading zero, it's a comms artifact.
+            } else if (rx_buffer_len >= RX_BUFFER_LENGTH) {
+                // Too many bytes, discard.
+            } else {
+                // Store the received byte.
+                rx_buffer[rx_buffer_len++] = rx_char;
+            }
+
+            if (rx_buffer_len >= expected_len) {
+                // We have received enough characters to process the message.
+                //os_printf("\n");
+                return true;
+            }
+        }
+        //os_printf("\n");
+    }
+
+    // If we get here, we don't yet have enough bytes for a full packet.
+    return false;
+}
+
+/*
  * Sends a request to the inverter for a single data point.
  */
 void ICACHE_FLASH_ATTR send_data_request() {
@@ -476,49 +498,21 @@ void ICACHE_FLASH_ATTR send_data_request() {
     expected_len = data_len + PACKET_OVERHEAD + COMMAND_LEN;
     os_printf("Expected len = %d.\n", expected_len);
 
-    // Start the timeout timer.
-    os_timer_disarm(&serial_rx_timer);
-    os_timer_arm(&serial_rx_timer, 10000, 0);
+    // Flush the serial receive buffer, to ensure that no previous messages get in the way.
+    flush_uart();
+    rx_buffer_len = 0;
+    rx_attempts = 0;
 
     // Send the request to the inverter, setting GPIO 4 to high for the transmission (for the RS485 converter).
     gpio_output_set(BIT4, 0, BIT4, 0);
-    os_delay_us(100);
-    uart_tx_array(tx_packet, 9);
     os_delay_us(1000);
+    uart_tx_array(tx_packet, 9);
+    os_delay_us(5000);
     gpio_output_set(0, BIT4, BIT4, 0);
-}
 
-/*
- * Call-back used to begin the transmission of requests for values from the Delta inverter.
- */
-void ICACHE_FLASH_ATTR transmit_cb() {
-    current_command_index = 0;
-    send_data_request();
-}
-
-/*
- * Call-back used when the serial timer has expired. This means that the inverter didn't respond to our request in time.
- */
-void ICACHE_FLASH_ATTR serial_timeout_cb() {
-    // Set the timeout flag, and reset the current command index to indicate that we shouldn't process any data.
-    os_printf("Timeout received while waiting for response for command %d.\n", current_command_index);
-    timeout = true;
-    current_command_index = -1;
-
-    // Send a message to mark the group as unhealthy.
-    string_builder *content = create_string_builder(30);
-    if (content == NULL) {
-        os_printf("Unable to create string builder to send timeout message.");
-    } else {
-        // Create the content portion of the HTTP request.
-        bool add_ok = true;
-        add_ok &= append_string_builder(content, "{\"groups\":{\"2\":\"unhealthy\"}}");
-        
-        // Send the contents to the server via an HTTP POST for processing.
-        if (add_ok) {
-            tagwriter_post(content);
-        }
-    }
+    // Start looking for the received message.
+    os_timer_disarm(&serial_rx_timer);
+    os_timer_arm(&serial_rx_timer, 5, 0);
 }
 
 /*
@@ -526,9 +520,6 @@ void ICACHE_FLASH_ATTR serial_timeout_cb() {
  * call to the server, as necessary.
  */
 void ICACHE_FLASH_ATTR process_response() {
-    // Cancel the receive timer.
-    os_timer_disarm(&serial_rx_timer);
-
     // Validate the packet.
     if ((rx_buffer[0] != STX) ||
         (rx_buffer[1] != GATEWAY_ADDR) ||
@@ -623,48 +614,54 @@ void ICACHE_FLASH_ATTR process_response() {
 }
 
 /*
- * Receives the characters from the serial port.
+ * Call-back used to begin the transmission of requests for values from the Delta inverter.
  */
-void ICACHE_FLASH_ATTR uart_rx_task(os_event_t *events) {
-    if (events->sig == 0) {
-        // Sig 0 is a normal receive. Get how many bytes have been received.
-        uint8_t rx_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
+void ICACHE_FLASH_ATTR transmit_cb() {
+    current_command_index = 0;
+    send_data_request();
+}
 
-        // Ensure we're still OK to process the data.
-        if (current_command_index != -1) {
-            // Add the received bytes to the buffer.
-            char rx_char;
-            os_printf("rx (%d): ", rx_len);
-            for (uint8_t ii=0; ii < rx_len; ii++) {
-                rx_char = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
-                os_printf("%02x ", rx_char);
-                if ((rx_char == 0) && (rx_buffer_len == 0)) {
-                    // Discard this leading zero, it's a comms artifact.
-                } else if (rx_buffer_len >= RX_BUFFER_LENGTH) {
-                    // Too many bytes, discard.
-                } else {
-                    // Store the received byte.
-                    rx_buffer[rx_buffer_len++] = rx_char;
-                }
+/*
+ * Call-back used when the serial timer has expired. We use this to check for any more data arriving at the serial port.
+ */
+void ICACHE_FLASH_ATTR serial_rx_cb() {
+    // Process the incoming bytes (if any) and see if we have enough for a response to our message.
+    bool complete = uart_rx();
 
-                if (rx_buffer_len >= expected_len) {
-                    // We have received enough characters to process the message.
-                    process_response();
-                    rx_buffer_len = 0;
+    if (complete) {
+        // We have received enough characters to process the message.
+        process_response();
+        rx_buffer_len = 0;
+        rx_attempts = 0;
+    } else {
+        rx_attempts++;
+        if (rx_attempts > RETRY_LIMIT) {
+            // Set the timeout flag, and reset the current command index to indicate that we shouldn't process any data.
+            os_printf("Timeout received while waiting for response for command %d.\n", current_command_index);
+            timeout = true;
+            current_command_index = -1;
+            rx_buffer_len = 0;
+            rx_attempts = 0;
+
+            // Send a message to mark the group as unhealthy.
+            string_builder *content = create_string_builder(30);
+            if (content == NULL) {
+                os_printf("Unable to create string builder to send timeout message.");
+            } else {
+                // Create the content portion of the HTTP request.
+                bool add_ok = true;
+                add_ok &= append_string_builder(content, "{\"groups\":{\"2\":\"unhealthy\"}}");
+
+                // Send the contents to the server via an HTTP POST for processing.
+                if (add_ok) {
+                    tagwriter_post(content);
                 }
             }
-            os_printf("\n");
         } else {
-            // We're not supposed to process this message - it's probably a late reception from the inverter.
-            char rx_char;
-            for (uint8_t ii=0; ii < rx_len; ii++) {
-                rx_char = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
-            }
+            // We haven't received enough bytes yet, but there's still time, restart the timer for another go.
+            os_timer_disarm(&serial_rx_timer);
+            os_timer_arm(&serial_rx_timer, 5, 0);
         }
-
-        // Clear the interrupt condition flags and re-enable the receive interrupt.
-        WRITE_PERI_REG(UART_INT_CLR(UART0), UART_RXFIFO_FULL_INT_CLR | UART_RXFIFO_TOUT_INT_CLR);
-        uart_rx_intr_enable(UART0);
     }
 }
 
@@ -742,10 +739,24 @@ LOCAL void ICACHE_FLASH_ATTR wifi_init() {
  */
 void user_init(void) {
     // Initialise the serial port.
-    uart_init(BIT_RATE_19200, BIT_RATE_19200);
+    //uart_init(BIT_RATE_19200, BIT_RATE_19200);
+    uart_div_modify(UART0, UART_CLK_FREQ / 19200);
+    uart_div_modify(UART1, UART_CLK_FREQ / 19200);
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_U1TXD_BK);
+
+    // Reset the Rx/Tx UART FIFOs.
+    SET_PERI_REG_MASK(UART_CONF0(UART0), UART_RXFIFO_RST | UART_TXFIFO_RST);
+    CLEAR_PERI_REG_MASK(UART_CONF0(UART0), UART_RXFIFO_RST | UART_TXFIFO_RST);
+    SET_PERI_REG_MASK(UART_CONF0(UART1), UART_RXFIFO_RST | UART_TXFIFO_RST);
+    CLEAR_PERI_REG_MASK(UART_CONF0(UART1), UART_RXFIFO_RST | UART_TXFIFO_RST);
 
     // Swap the UART 0 pins over, to suppress the start-up output.
-    system_uart_swap();
+    //system_uart_swap();
+
+    // GPIO 4 is an output, start with it low.
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4);
+    PIN_PULLUP_DIS(PERIPHS_IO_MUX_GPIO4_U);
+    gpio_output_set(0, BIT4, BIT4, 0);
 
     // Start the network.
     wifi_init();
@@ -762,14 +773,8 @@ void user_init(void) {
     //os_timer_arm(&transmit_timer, 5 * 60 * 1000, 1);
     os_timer_arm(&transmit_timer, 1 * 60 * 1000, 1);
 
-    // Prepare a timer for the timing out of a serial reception, but don't start it now (we haven't sent anything yet!)
+    // Prepare a timer for checking if we've received any messages from the inverter, but don't start it now 
+    // (we haven't sent anything yet!)
     os_timer_disarm(&serial_rx_timer);
-    os_timer_setfn(&serial_rx_timer, (os_timer_func_t *)serial_timeout_cb, (void *)0);
-
-    // GPIO 4 is an output, start with it low.
-    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4);
-    gpio_output_set(0, BIT4, BIT4, 0);
-
-    // Call the transmit timer callback immediately, so we don't have to wait for 5 minutes for the first action.
-    //transmit_cb();
+    os_timer_setfn(&serial_rx_timer, (os_timer_func_t *)serial_rx_cb, (void *)0);
 }
