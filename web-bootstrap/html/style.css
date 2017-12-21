@@ -1,0 +1,52 @@
+input[type=password], input[type=text] {
+	width: 80%;
+	padding: 5px 10px;
+	margin: 8px 0 0 5px;
+	border: 1px solid #888;
+	border-radius: 5px;
+	box-sizing: border-box;
+}
+
+input[type=reset] {
+	float: right;
+}
+
+input[type=submit], input[type=reset] {
+	width: 180px;
+	margin-top: 20px;
+	padding: 14px 10px;
+	background-color: #a0c8ff;
+	cursor: pointer;
+}
+#background-color: #529aff;
+
+input[type=submit]:hover, input[type=reset]:hover {
+	background-color: #006bff;
+}
+
+form {
+	width: 400px;
+	border-radius: 10px;
+	background-color: #ddd;
+	padding: 20px;
+	margin: 20px;
+}
+
+h1 {
+	color: #1879ff;
+}
+
+table {
+	width: 400px;
+	margin: 20px;
+}
+
+th, td {
+	padding: 5px;
+	border-bottom: 1px solid #ddd;
+}
+
+th {
+	background-color: #a0c8ff;
+	font-weight: normal;
+}

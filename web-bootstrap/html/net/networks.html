@@ -1,0 +1,175 @@
+<html>
+<head>
+	<title>ESP8266 WiFi Configuration</title>
+	<link rel="stylesheet" type="text/css" href="/style.css"/>
+	<script type="text/javascript">
+function getStatus() {
+	var xhr = new XMLHttpRequest();
+	xhr.onreadystatechange = function() {
+		if ((xhr.readyState == 4) && ((xhr.status >= 200) && (xhr.status < 300))) {
+			// We have a valid response, extract the values into the table.
+			var values = JSON.parse(xhr.responseText);
+			document.getElementById("opmode").innerHTML = values.opmode;
+			document.getElementById("apMac").innerHTML = values.ap.mac;
+			document.getElementById("apIp").innerHTML = values.ap.ip;
+			document.getElementById("apClientCount").innerHTML = values.ap.clientCount;
+			if (values.station.ssid !== undefined) {
+				document.getElementById("stnSsid").innerHTML = values.station.ssid;
+			} else {
+				document.getElementById("stnSsid").innerHTML = "N/A";
+			}
+			document.getElementById("stnMac").innerHTML = values.station.mac;
+			var stat = values.station.status;
+			document.getElementById("stnStatus").innerHTML = stat;
+			if (stat === "Connected") {
+				document.getElementById("stnIp").innerHTML = values.station.ip;
+			} else {
+				document.getElementById("stnIp").innerHTML = "N/A";
+			}
+			document.getElementById("stnRssi").innerHTML = values.station.rssi;
+
+			// Show the results.
+			document.getElementById("loadStatus").style.display = "none";
+			document.getElementById("status").style.display = "block";
+
+			// Schedule for the status to be updated again in 30 seconds.
+			window.setTimeout(getStatus, 30000);
+		}
+	}
+	xhr.open("GET", "status.cgi");
+	xhr.send();
+}
+
+function getSelectedNetwork() {
+	var results = document.getElementById("scanResults").childNodes;
+	for (var ii = 0; ii < results.length; ii++) {
+		if ((results[ii].type === "radio") && (results[ii].checked === true)) {
+			// This is the selected network.
+			return results[ii].value;
+		}
+	}
+
+	// If we get here, then no network was checked. Use the current station, if one exists.
+	return document.getElementById("stnSsid").innerHTML;
+}
+
+function scanWifi() {
+	console.log("Scanning Wifi...");
+	var xhr = new XMLHttpRequest();
+	xhr.onreadystatechange = function() {
+		if ((xhr.readyState == 4) && ((xhr.status >= 200) && (xhr.status < 300))) {
+			// We have a valid response, extract the values into the table.
+			var values = JSON.parse(xhr.responseText);
+			if ((values.result.inProgress == "0") && (values.result.APs.length > 0)) {
+				// Work out which item is currently selected so we can match it.
+				var selection = getSelectedNetwork();
+
+				// Erase the previous network list.
+				var radioList = document.getElementById("scanResults");
+				radioList.innerHTML = "";
+
+				// Create new input elements from which the user can choose the network.
+				for (var ii = 0; ii < values.result.APs.length; ii++) {
+					var ap = values.result.APs[ii];
+					if ((ap.essid === "") && (ap.rssi === 0)) {
+						// This entry doesn't actually exist.
+						continue;
+					}
+
+					// Create an input element for this 
+					var radio = document.createElement("input");
+					radio.type = "radio";
+					radio.id = "radio-" + ap.essid;
+					radio.name = "networks";
+					radio.value = ap.essid;
+					if (ap.essid === selection) {
+						radio.checked = "1";
+					}
+
+					// Create the label for the input element.
+					var label = document.createElement("label");
+					label.htmlFor = "radio-" + ap.essid;
+					label.textContent = ap.essid + " (";
+					switch (ap.enc) {
+						case "0":
+							// AUTH_OPEN
+							label.textContent += "open";
+							break;
+						case "1":
+							// AUTH_WEP
+							label.textContent += "WEP";
+							break;
+						case "2":
+							// AUTH_WPA_PSK
+							label.textContent += "WPA PSK";
+							break;
+						case "3":
+							// AUTH_WPA2_PSK
+							label.textContent += "WPA2 PSK";
+							break;
+						case "4":
+							// AUTH_WPA_WPA2_PSK
+							label.textContent += "WPA/WPA2 PSK";
+							break;
+						default:
+							label.textContent += "unknown encryption";
+							break;
+					}
+					label.textContent += ", rssi " + ap.rssi + ")";
+
+					// Add the input and its label to the list.
+					radioList.appendChild(radio);
+					radioList.appendChild(label);
+					radioList.appendChild(document.createElement("br"));
+				}
+				
+				// Call again in 20 seconds, there's no need to do it too soon.
+				window.setTimeout(scanWifi, 20000);
+			} else {
+				window.setTimeout(scanWifi, 1000);
+			}
+		}
+	}
+
+	xhr.open("GET", "scan.cgi");
+	xhr.send();
+}
+
+window.onload=function(e) {
+	getStatus();
+	window.setTimeout(scanWifi, 500);
+};
+	</script>
+</head>
+<body>
+	<h1>Current Settings:</h1>
+	<div id="loadStatus">Loading...</div>
+	<div id="status" style="display: none;">
+		<table>
+			<tr><th colspan="2">Common</th></tr>
+			<tr><td>Current WiFi mode</td><td id="opmode">N/A</td></tr>
+			<tr><th colspan="2">Access Point</th></tr>
+			<tr><td>MAC Address</td><td id="apMac">N/A</td></tr>
+			<tr><td>IP Address</td><td id="apIp">N/A</td></tr>
+			<tr><td>Number of clients</td><td id="apClientCount">N/A</td></tr>
+			<tr><th colspan="2">Station Mode</th></tr>
+			<tr><td>SSID</td><td id="stnSsid">N/A</td></tr>
+			<tr><td>Status</td><td id="stnStatus">N/A</td></tr>
+			<tr><td>MAC Address</td><td id="stnMac">N/A</td></tr>
+			<tr><td>IP Address</td><td id="stnIp">N/A</td></tr>
+			<tr><td>RSSI</td><td id="stnRssi">N/A</td></tr>
+		</table>
+	</div>
+
+	<div id="networks">
+		<h1>Network Configuration</h1>
+		<form name="net" action="connect.cgi" method="post">
+			Select one of the below networks to connect:
+			<div id="scanResults"><p>Scanning...</p></div>
+			<label for="pass">Password</label>
+			<input type="password" id="pass" name="pass" maxlength="32"><br>
+			<input type="submit" value="Save and Configure">
+		</form>
+	</div>
+</body>
+</html>

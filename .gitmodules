@@ -1,0 +1,3 @@
+[submodule "web-bootstrap/libesphttpd"]
+	path = web-bootstrap/libesphttpd
+	url = http://git.spritesserver.nl/libesphttpd.git/
