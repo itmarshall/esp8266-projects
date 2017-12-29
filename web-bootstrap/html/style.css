@@ -32,6 +32,13 @@ form {
 	margin: 20px;
 }
 
+fieldset {
+	margin: 5px;
+	border: 1px solid #888;
+	border-style: solid;
+	border-radius: 5px;
+}
+
 h1 {
 	color: #1879ff;
 }

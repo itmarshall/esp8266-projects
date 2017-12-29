@@ -80,7 +80,7 @@ function scanWifi() {
 					var radio = document.createElement("input");
 					radio.type = "radio";
 					radio.id = "radio-" + ap.essid;
-					radio.name = "networks";
+					radio.name = "essid";
 					radio.value = ap.essid;
 					if (ap.essid === selection) {
 						radio.checked = "1";
@@ -135,10 +135,24 @@ function scanWifi() {
 	xhr.send();
 }
 
-window.onload=function(e) {
+function modeChange(e) {
+	if (e.currentTarget.value === "2") {
+		document.getElementById("stationSettings").style.display = "none";
+	} else {
+		document.getElementById("stationSettings").style.display = "block";
+	}
+}
+
+document.addEventListener("DOMContentLoaded", function(event) { 
+	// Add events for the radio input listeners.
+	document.getElementById("mode-station").addEventListener("change", modeChange);
+	document.getElementById("mode-softap").addEventListener("change", modeChange);
+	document.getElementById("mode-stationap").addEventListener("change", modeChange);
+
 	getStatus();
 	window.setTimeout(scanWifi, 500);
-};
+});
+
 	</script>
 </head>
 <body>
@@ -164,10 +178,20 @@ window.onload=function(e) {
 	<div id="networks">
 		<h1>Network Configuration</h1>
 		<form name="net" action="connect.cgi" method="post">
-			Select one of the below networks to connect:
-			<div id="scanResults"><p>Scanning...</p></div>
-			<label for="pass">Password</label>
-			<input type="password" id="pass" name="pass" maxlength="32"><br>
+			<fieldset>
+			    <legend>Network Mode</legend>
+				<input type="radio" name="mode" value="1" id="mode-station" checked><label for="mode-station">Station</label><br>
+				<input type="radio" name="mode" value="2" id="mode-softap"><label for="mode-softap">Access Point</label><br>
+				<input type="radio" name="mode" value="3" id="mode-stationap"><label for="mode-stationap">Station and Access Point</label>
+			</fieldset>
+			<div id="stationSettings">
+				<fieldset>
+					<legend>Select Network:</legend>
+					<div id="scanResults"><p>Scanning...</p></div>
+				</fieldset>
+				<label for="pass">Password</label>
+				<input type="password" id="passwd" name="passwd" maxlength="32"><br>
+			</div>
 			<input type="submit" value="Save and Configure">
 		</form>
 	</div>

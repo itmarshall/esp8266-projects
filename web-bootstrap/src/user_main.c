@@ -25,75 +25,9 @@
 #include "tcp_ota.h"
 #include "string_builder.h"
 
-// Stores the address to which the results from the inverter are sent via HTTP in an ip_addr structure.
-#define REMOTE_ADDR(ip) (ip)[0] = 10; (ip)[1] = 0; (ip)[2] = 1; (ip)[3] = 253;
-
-/**
- * Fills in the network information for the network template.
+/*
+ * Returns a HTML page, with an appropriate error code and string.
  */
-int ICACHE_FLASH_ATTR tplNetInfo(HttpdConnData *connData, char *token, void **arg) {
-	if (token==NULL) {
-		// No token means that there's nothing to do.
-		return HTTPD_CGI_DONE;
-	}
-	
-	// Create the string buffer into which the result will be stored.
-	string_builder *sb = create_string_builder(128);
-	if (sb == NULL) {
-		return HTTPD_CGI_DONE;
-	}
-
-	if (strcmp(token, "WiFiMode") == 0) {
-		// Get the WiFi mode currently in use.
-		uint8_t mode = wifi_get_opmode_default();
-		switch (mode) {
-			case STATION_MODE:
-				append_string_builder(sb, "Station");
-				break;
-			case SOFTAP_MODE:
-				append_string_builder(sb, "Access Point");
-				break;
-			case STATIONAP_MODE:
-				append_string_builder(sb, "Station and Access Point");
-				break;
-			default:
-				append_string_builder(sb, "Unknown");
-				break;
-		}
-	} else if (strcmp(token, "apIp") == 0) {
-		// Get the IP address of the access point.
-		struct ip_info info;
-		bool res = wifi_get_ip_info(SOFTAP_IF, &info);
-		if (!res) {
-			append_string_builder(sb, "Unknown");
-		} else {
-			char buf[20];
-			os_sprintf(buf, IPSTR, IP2STR(&info.ip));
-			append_string_builder(sb, buf);
-		}
-	} else if (strcmp(token, "stnIp") == 0) {
-		// Get the IP address of the station.
-		struct ip_info info;
-		bool res = wifi_get_ip_info(STATION_IF, &info);
-		if (!res) {
-			append_string_builder(sb, "Unknown");
-		} else {
-			char buf[20];
-			os_sprintf(buf, IPSTR, IP2STR(&info.ip));
-			append_string_builder(sb, buf);
-		}
-	} else if (strcmp(token, "apClients") == 0) {
-		// Get the number of clients for the access point.
-		int32_t num = (int32_t)wifi_softap_get_station_num();
-		append_int32_string_builder(sb, num);
-	}
-
-	// Send the results through to the web caller.
-	httpdSend(connData, sb->buf, sb->len);
-
-	free_string_builder(sb);
-}
-
 LOCAL void httpCodeReturn(HttpdConnData *connData, uint16_t code, char *title, char *message) {
 	// Write the header.
 	httpdStartResponse(connData, code);
@@ -108,6 +42,9 @@ LOCAL void httpCodeReturn(HttpdConnData *connData, uint16_t code, char *title, c
 	httpdSend(connData, "</p></body></html>", -1);
 }
 
+/*
+ * CGI function to return the current status of the WiFi connection as JSON data.
+ */
 LOCAL int cgi_wifi_status(HttpdConnData *connData) {
 	string_builder *sb = create_string_builder(128);
 	if (sb == NULL) {
@@ -218,6 +155,10 @@ LOCAL int cgi_wifi_status(HttpdConnData *connData) {
 	return HTTPD_CGI_DONE;
 }
 
+/*
+ * CGI function to configure the network, connecting to a station if required.
+ * All required parameters are sourced from the HTML connection.
+ */
 int ICACHE_FLASH_ATTR cgi_connect_network(HttpdConnData *connData) {
 	// Get the settings.
 	char essid[33];
@@ -278,7 +219,7 @@ int ICACHE_FLASH_ATTR cgi_connect_network(HttpdConnData *connData) {
 			break;
 	}
 
-	httpdRedirect(connData, "/net.html");
+	httpdRedirect(connData, "/net/networks.html");
 	return HTTPD_CGI_DONE;
 }
 
@@ -348,9 +289,9 @@ LOCAL void ICACHE_FLASH_ATTR wifi_init() {
 
 // The URLs that the HTTP server can handle.
 HttpdBuiltInUrl builtInUrls[]={
-	{"/", cgiRedirect, "/net/net.html"},
-	{"/net", cgiRedirect, "/net/net.html"},
-	{"/net/", cgiRedirect, "/net/net.html"},
+	{"/", cgiRedirect, "/net/networks.html"},
+	{"/net", cgiRedirect, "/net/networks.html"},
+	{"/net/", cgiRedirect, "/net/networks.html"},
 	{"/net/scan.cgi", cgiWiFiScan, NULL},
 	{"/net/status.cgi", cgi_wifi_status, NULL},
 	{"/net/connect.cgi", cgi_connect_network, NULL},
@@ -362,17 +303,23 @@ HttpdBuiltInUrl builtInUrls[]={
  * Entry point for the program. Sets up the microcontroller for use.
  */
 void user_init(void) {
+	// Initialise the UART.
+	uart_div_modify(0, UART_CLK_FREQ / 19200);
+	os_printf("Starting up web bootstrap.\n");
+
 	// Initialise the wifi.
+	os_printf("Initialising the WiFi.\n");
 	wifi_init();
 
 	// Initialise the HTTP server.
+	os_printf("Initialising HTTP server.\n");
 	captdnsInit();
 	espFsInit((void*)(webpages_espfs_start));
 	httpdInit(builtInUrls, 80);
 
     // Initialise the OTA flash system.
+	os_printf("Initialising OTA.\n");
     ota_init();
-
-    // Initialise the network debugging.
-    //dbg_init();
+	
+	os_printf("Web Bootstrap initialisation complete..\n");
 }

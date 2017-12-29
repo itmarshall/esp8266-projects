@@ -16,7 +16,8 @@
 PROJ_NAME ?= web-bootstrap
 
 # hostname or IP address for OTA flashing
-ESP_HOSTNAME ?= 10.0.1.18
+ESP_HOSTNAME ?= 10.0.1.76
+#ESP_HOSTNAME ?= 192.168.4.1
 
 # --------------- toolchain configuration ---------------
 
@@ -41,14 +42,15 @@ SDK_BASE := $(abspath $(SDK_BASE))
 $(warning Using SDK from $(SDK_BASE))
 
 # Path to bootloader file
-BOOTFILE	?= $(SDK_BASE/bin/boot_v1.5.bin)
+BOOTFILE	?= $(SDK_BASE/bin/boot_v1.6.bin)
 
 # Esptool.py path and port, only used for 1-time serial flashing
 # Typically you'll use https://github.com/themadinventor/esptool
 # Windows users use the com port i.e: ESPPORT ?= com3
 ESPTOOL		?= ~/ESP8266/esp-open-sdk/esptool/esptool.py
-ESPPORT		?= /dev/ttyUSB0
-ESPBAUD		?= 460800
+ESPPORT		?= /dev/ttyS3
+#ESPBAUD		?= 460800
+ESPBAUD		?= 115200
 
 # --------------- chipset configuration   ---------------
 
@@ -285,7 +287,7 @@ baseflash: all
 
 flash: all
 	$(Q) $(ESPTOOL) --port $(ESPPORT) --baud $(ESPBAUD) write_flash -fs $(ET_FS) -ff $(ET_FF) \
-	  0x00000 "$(SDK_BASE)/bin/boot_v1.5.bin" 0x01000 $(FW_BASE)/user1.bin \
+	  0x00000 "$(SDK_BASE)/bin/boot_v1.6.bin" 0x01000 $(FW_BASE)/user1.bin \
 	  $(ET_BLANK) $(SDK_BASE)/bin/blank.bin
 
 clean:
