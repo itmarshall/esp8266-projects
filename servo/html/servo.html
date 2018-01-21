@@ -1,0 +1,116 @@
+<html>
+<head>
+	<title>ESP8266 Servo Demonstration</title>
+	<link rel="stylesheet" type="text/css" href="/style.css"/>
+	<script type="text/javascript">
+
+var wsURI = "ws://" + window.location.host + "/ws.cgi";
+var ws;
+var connected = false;
+
+/*
+ * Writes the angle and duty cycle information to the HTML nodes.
+ */
+function writeAngleAndDuty(angle, duty) {
+	document.getElementById("angle").innerHTML = angle;
+	document.getElementById("duty").innerHTML = duty;
+}
+
+/*
+ * Handles the opening of a web socket connection.
+ */
+function wsOpen(e) {
+	connected = true;
+	document.getElementById("status").innerHTML = "Connected";
+}
+
+/*
+ * Handles the closure of the web socket for any reason.
+ */
+function wsClose(e) {
+	connected = false;
+	document.getElementById("status").innerHTML = "Not Connected";
+
+	window.setTimeout(connectWebSocket, 5000);
+}
+
+/*
+ * Handles the reception of a message via the web socket.
+ */
+function wsMessage(e) {
+	var values = JSON.parse(e.data);
+	var valuesSet = false;
+	if (values !== undefined) {
+		var angle = values.angle;
+		var duty = values.duty;
+		if ((angle !== undefined) && (duty !== undefined)) {
+			valuesSet = true;
+			writeAngleAndDuty(angle, duty);
+		}
+	}
+
+	if (!valuesSet) {
+		writeAngleAndDuty("N/A", "N/A");
+	}
+}
+
+/*
+ * Sends data to the web socket, if we have a valid connection.
+ */
+function sendToWebSocket(data) {
+	if (connected) {
+		ws.send(data);
+	}
+}
+
+/*
+ * Connects to the web socket and sets up the appropriate event callbacks.
+ */
+function connectWebSocket() {
+	// Update status information.
+	document.getElementById("status").innerHTML = "Connecting";
+	writeAngleAndDuty("N/A", "N/A");
+
+	// Create the web socket and set up the callbacks.
+	ws = new WebSocket(wsURI);
+	ws.addEventListener('open', wsOpen);
+	ws.addEventListener('close', wsClose);
+	//ws.addEventListener('error', wsError);
+	ws.addEventListener('message', wsMessage);
+}
+
+/*
+ * Called when the DOM has finished loading.
+ */
+document.addEventListener("DOMContentLoaded", function(event) { 
+	// Connect to the web socket.
+	connectWebSocket();
+
+	// Update the chosen angle as the slider is moved.
+	var slider = document.getElementById("slider");
+	var output = document.getElementById("chosenAngle");
+	output.innerHTML = slider.value;
+	slider.addEventListener('input', function() {
+		output.innerHTML = slider.value;
+		sendToWebSocket(slider.value.toString());
+	});
+});
+
+	</script>
+</head>
+<body>
+</body>
+	<div class="banner">
+		ESP8266 Servo Demonstration
+	</div>
+	<div id="servo">
+		<p>Servo Angle:</p>
+		<input type="range" min="-90" max="90" value="0" class="slider" id="slider">
+	</div>
+	<table>
+		<tr><th>Chosen Angle</th><td><span id="chosenAngle"></span></td></tr>
+		<tr><th>Connection Status</th><td><span id="status">N/A</span></td></tr>
+		<tr><th>ESP8266 Angle</th><td><span id="angle"></span></td></tr>
+		<tr><th>PWM Duty</th><td><span id="duty"></span></td></tr>
+	</table>
+</html>
